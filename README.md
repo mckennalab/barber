@@ -13,6 +13,8 @@ Downloads are available on the release page for Linux systems, or you can build 
 
 ## Documentation
 
+**You want to preserve color annotations** in piped processes, and you'll need to set the command line coloring option. For bash this looks something like ```export CLICOLOR_FORCE=1```. This will then color the output when previewing your cut reads.
+
 ```
 A constrained use-case fastq trimmer
 
