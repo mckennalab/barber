@@ -4,17 +4,20 @@ extern crate flate2;
 extern crate core;
 
 mod trimmers;
+mod sift4;
+mod primers;
 
 use std::cmp::{max, min};
 use std::io;
-use flate2::read::GzDecoder;
+use flate2::read::MultiGzDecoder;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use colored::Colorize;
 use clap::Parser;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use crate::trimmers::{BackTrimmer, FastqTrimmer, FrontBackTrimmer, PolyXTrimmer};
+use crate::trimmers::{BackTrimmer, FastqTrimmer, FrontBackTrimmer, PolyXTrimmer, PrimerTrimmer};
+use log::{warn};
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -67,6 +70,18 @@ struct Args {
     #[arg(short, long, default_value_t = 0.9)]
     trim_poly_x_proportion: f64,
 
+    /// primers to detect and remove, separated by commas
+    #[arg(short, long)]
+    primers: Option<String>,
+
+    /// primers max mismatch distance
+    #[arg(short, long, default_value_t = 1)]
+    primers_max_mismatch_distance: u8,
+
+    /// what proportion of the read ends can a primer be found in -- if it's interior to this margin we drop the read(s)
+    #[arg(short, long, default_value_t = 0.2)]
+    primers_end_proportion: f64,
+
     /// just display the reads and what we'd cut
     #[arg(short, long, default_value_t = false)]
     preview: bool,
@@ -81,13 +96,13 @@ pub struct FastqRecord {
 
 /// an input decoder for our gzipped FASTQ file
 struct FastqInputFile {
-    decoder: BufReader<GzDecoder<File>>,
+    decoder: BufReader<MultiGzDecoder<File>>,
 }
 
 impl FastqInputFile {
     pub fn new(path: &str) -> Result<FastqInputFile, io::Error> {
         let file = File::open(path)?;
-        let decoder = io::BufReader::new(GzDecoder::new(file));
+        let decoder = io::BufReader::new(MultiGzDecoder::new(file));
         Ok(FastqInputFile { decoder })
     }
 }
@@ -98,12 +113,17 @@ impl Iterator for FastqInputFile {
     fn next(&mut self) -> Option<FastqRecord> {
         let mut name = String::new();
         match self.decoder.read_line(&mut name) {
-            Ok(_) => {}
-            Err(_e) => return None,
+            Ok(_) => {
+            }
+            Err(_e) => {
+                warn!("Error reading sequence line for unnamed read");
+                return None
+            },
         }
         let mut name = name.into_bytes();
         if name.len() == 0 {
             return None;
+
         }
         assert_eq!(name[0], b'@');
         name.pop(); // drop endline
@@ -111,18 +131,27 @@ impl Iterator for FastqInputFile {
         let mut seq = String::new();
         match self.decoder.read_line(&mut seq) {
             Ok(_) => {}
-            Err(_e) => return None,
+            Err(_e) => {
+                warn!("Error reading sequence line for read {}", String::from_utf8(name).unwrap());
+                return None
+            },
         }
         seq.pop(); // drop endline
         let mut _orient = String::new();
         match self.decoder.read_line(&mut _orient) {
             Ok(_) => {}
-            Err(_e) => return None,
+            Err(_e) => {
+                warn!("Error reading orientation line for read {}", String::from_utf8(name).unwrap());
+                return None
+            },
         }
         let mut quals = String::new();
         match self.decoder.read_line(&mut quals) {
             Ok(_) => {}
-            Err(_e) => return None,
+            Err(_e) => {
+                warn!("Error reading quals line for read {}", String::from_utf8(name).unwrap());
+                return None
+            },
         }
         quals.pop(); // drop endline
 
@@ -131,6 +160,8 @@ impl Iterator for FastqInputFile {
 }
 
 fn main() {
+    simple_logger::init_with_level(log::Level::Warn).unwrap();
+
     let args = Args::parse();
 
     assert!(args.preview ^ args.out_fastq1.is_some(), "Either preview mode or output files need to be set");
@@ -141,11 +172,25 @@ fn main() {
     let mut reader = FastqInputFile::new(&args.fastq1.unwrap()).expect("invalid path/file for fastq1");
 
     let mut cutters: Vec<Box<dyn FastqTrimmer>> = Vec::new();
+
+    if args.primers.is_some() {
+        let primers = args.primers.unwrap();
+        let primers: Vec<Vec<u8>> = primers.split(",").map(|i|i.as_bytes().to_vec()).collect();
+        cutters.push(Box::new(PrimerTrimmer::new(&primers, &args.primers_max_mismatch_distance, &args.primers_end_proportion)));
+    }
+
     if args.trim_poly_a {
         cutters.push(Box::new(PolyXTrimmer {
-            minimum_length: args.trim_poly_x_length.clone(),
+            window_size: args.trim_poly_x_length.clone(),
             minimum_g_proportion: args.trim_poly_x_proportion.clone(),
             bases: vec![b'A', b'a'],
+        }));
+    }
+    if args.trim_poly_g {
+        cutters.push(Box::new(PolyXTrimmer {
+            window_size: args.trim_poly_x_length.clone(),
+            minimum_g_proportion: args.trim_poly_x_proportion.clone(),
+            bases: vec![b'G', b'g'],
         }));
     }
 
@@ -159,8 +204,12 @@ fn main() {
     }
 }
 
-fn max_min_pair(pair_one: &(usize, usize), pair_two: &(usize, usize)) -> (usize, usize) {
-    (max(pair_one.0, pair_two.0), min(pair_one.1, pair_two.1))
+fn max_min_pair(pair_one: &(bool, usize, usize), pair_two: &(bool, usize, usize)) -> (bool, usize, usize) {
+    if !pair_one.0 || !pair_two.0 {
+        (false, 0, 0)
+    } else {
+        (true, max(pair_one.1, pair_two.1), min(pair_one.2, pair_two.2))
+    }
 }
 
 fn single_end(reader1: &mut FastqInputFile,
@@ -170,19 +219,19 @@ fn single_end(reader1: &mut FastqInputFile,
               preview: &bool) {
 
     while let Some(read1) = reader1.next() {
-        let mut base_cuts = (0, read1.seq.len());
+        let mut base_cuts = (true, 0, read1.seq.len());
         for cutter in cutters {
             let cut = cutter.trim(&read1);
             base_cuts = max_min_pair(&base_cuts, &cut);
         }
 
-        if &base_cuts.1 - &base_cuts.0 > *minimum_remaining_read_size {
+        if base_cuts.0 && &base_cuts.2 - &base_cuts.1 > *minimum_remaining_read_size {
             match *preview {
                 true => {
-                    print_read(read1.name.as_slice(), read1.seq.as_slice(), read1.quals.as_slice(), &base_cuts.0, &base_cuts.1)
+                    print_read(read1.name.as_slice(), read1.seq.as_slice(), read1.quals.as_slice(), &base_cuts.1, &base_cuts.2)
                 }
                 false => {
-                    write_read(out_fastq, &slice_read(&read1, &base_cuts.0, &base_cuts.1)).expect("Unable to write to output file 1.");
+                    write_read(out_fastq, &slice_read(&read1, &base_cuts.1, &base_cuts.2)).expect("Unable to write to output file 1.");
                 }
             }
         }
@@ -199,9 +248,13 @@ fn paired_end(reader1: &mut FastqInputFile,
               preview: &bool) {
 
     while let Some(read1) = reader1.next() {
-        let read2 = reader2.next().unwrap();
-        let mut base_cuts_read1 = (0, read1.seq.len());
-        let mut base_cuts_read2 = (0, read2.seq.len());
+        let read2 = match reader2.next() {
+            None => {panic!("Reads in fastq1 and fastq2 are not paired, at read1 {}",String::from_utf8(read1.name).unwrap())}
+            Some(x) => {x}
+        };
+
+        let mut base_cuts_read1 = (true, 0, read1.seq.len());
+        let mut base_cuts_read2 = (true, 0, read2.seq.len());
 
         for cutter in cutters {
             let cut = cutter.trim(&read1);
@@ -211,17 +264,18 @@ fn paired_end(reader1: &mut FastqInputFile,
             base_cuts_read2 = max_min_pair(&base_cuts_read2, &cut);
         }
 
-        if (&base_cuts_read1.1 - &base_cuts_read1.0 > *minimum_remaining_read_size) &&
-            (&base_cuts_read2.1 - &base_cuts_read2.0 > *minimum_remaining_read_size) {
+        if ((base_cuts_read1.0 && base_cuts_read2.0) &&
+            &base_cuts_read1.2 - &base_cuts_read1.1 > *minimum_remaining_read_size) &&
+            (&base_cuts_read2.2 - &base_cuts_read2.1 > *minimum_remaining_read_size) {
 
             match *preview {
                 true => {
-                    print_read(read1.name.as_slice(), read1.seq.as_slice(), read1.quals.as_slice(), &base_cuts_read1.0, &base_cuts_read1.1);
-                    print_read(read2.name.as_slice(), read2.seq.as_slice(), read2.quals.as_slice(), &base_cuts_read2.0, &base_cuts_read2.1);
+                    print_read(read1.name.as_slice(), read1.seq.as_slice(), read1.quals.as_slice(), &base_cuts_read1.1, &base_cuts_read1.2);
+                    print_read(read2.name.as_slice(), read2.seq.as_slice(), read2.quals.as_slice(), &base_cuts_read2.1, &base_cuts_read2.2);
                 }
                 false => {
-                    write_read(out_fastq1, &slice_read(&read1, &base_cuts_read1.0, &base_cuts_read1.1)).expect("Unable to write to output file 1.");
-                    write_read(out_fastq2, &slice_read(&read2, &base_cuts_read2.0, &base_cuts_read2.1)).expect("Unable to write to output file 2.");
+                    write_read(out_fastq1, &slice_read(&read1, &base_cuts_read1.1, &base_cuts_read1.2)).expect("Unable to write to output file 1.");
+                    write_read(out_fastq2, &slice_read(&read2, &base_cuts_read2.1, &base_cuts_read2.2)).expect("Unable to write to output file 2.");
                 }
             }
         }
@@ -242,8 +296,11 @@ fn setup_compressed_file(fastq_output: &Option<String>) -> BufWriter<GzEncoder<B
 
 pub fn write_read(writer: &mut BufWriter<dyn Write>, record: &FastqRecord) -> Result<(), io::Error> {
     writer.write_all(&record.name)?;
+    writer.write_all(b"\n")?;
     writer.write_all(&record.seq)?;
+    writer.write_all(b"\n+\n")?;
     writer.write_all(&record.quals)?;
+    writer.write_all(b"\n")?;
     Ok(())
 }
 
@@ -265,10 +322,6 @@ pub fn print_read(name: &[u8], seq: &[u8], qual: &[u8], slice_point_front: &usiz
 fn print_format_read(seq: &[u8], qual: &[u8], slice_point_front: &usize, slice_point_rear: &usize) {
     let mut seq_string = String::new();
     //seq_string.push_str(&format!("{}",">>>>>>>>>>").white().to_string());
-    if slice_point_front > &0 {
-        seq_string.push_str(&format!("{}", String::from_utf8(seq[0..*slice_point_front].to_vec()).unwrap()).white().to_string());
-    }
-
     for index in 0..seq.len() {
         let base = seq.get(index.clone()).unwrap();
         let quality = u32::from(qual[index]);
@@ -285,12 +338,15 @@ fn print_format_read(seq: &[u8], qual: &[u8], slice_point_front: &usize, slice_p
                 formated_base = formated_base.truecolor(qual_adjusted.clone(), qual_adjusted.clone(), qual_adjusted.clone()).to_string()
             }
         }
-        if index <= *slice_point_front || index >= *slice_point_rear {
-            formated_base = formated_base.on_color("red").to_string();
+        if index < *slice_point_front || index >= *slice_point_rear {
+            formated_base = formated_base.on_truecolor(255,0,0).to_string();
+        } else {
+            formated_base = formated_base.on_truecolor(color_qual_proportion(&quality),color_qual_proportion(&quality),color_qual_proportion(&quality)).to_string();
         }
 
         seq_string.push_str(&format!("{}", formated_base).to_string());
     }
+
     println!("{}", seq_string);
 }
 
