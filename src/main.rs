@@ -23,64 +23,64 @@ use log::{warn};
 /// A constrained use-case fastq trimmer
 #[derive(Parser, Debug)]
 struct Args {
-    /// input fastq file 1
-    #[arg(short, long)]
+    /// the first fastq file -- required
+    #[arg(long)]
     fastq1: Option<String>,
 
-    /// input fastq file 2
-    #[arg(short, long)]
+    /// a second fastq file, for Illumina paired-end reads
+    #[arg(long)]
     fastq2: Option<String>,
 
     /// output fastq file 1
-    #[arg(short, long)]
+    #[arg(long)]
     out_fastq1: Option<String>,
 
-    /// output fastq file 2
-    #[arg(short, long)]
+    /// output fastq file 2 -- if using paired-end reads
+    #[arg(long)]
     out_fastq2: Option<String>,
 
-    /// minimum remaining read size
-    #[arg(short, long, default_value_t = 10)]
+    /// minimum remaining read size after trimming is complete -- reads shorter than this will be discarded
+    #[arg(long, default_value_t = 10)]
     minimum_remaining_read_size: usize,
 
-    /// the minimum average score a window of nucleotides must have
-    #[arg(short, long, default_value_t = 10)]
+    /// the minimum average quality score a window of nucleotides must have
+    #[arg(long, default_value_t = 10)]
     window_min_qual_score: u8,
 
     /// trimming window size
-    #[arg(short, long, default_value_t = 10)]
+    #[arg(long, default_value_t = 10)]
     window_size: u8,
 
-    /// trim a read after a poly-A tail is foun (RNA-seq)
-    #[arg(short, long, default_value_t = false)]
+    /// enable poly-A tail trimming (seen in RNA-seq data)
+    #[arg(long, default_value_t = false)]
     trim_poly_a: bool,
 
-    /// trim a read after a poly-G tail is found (sequenced off the end of an Illumina read)
-    #[arg(short, long, default_value_t = false)]
+    /// trim a read after a poly-G tail is found (seen when sequencing off the end of an Illumina read with 2-color chemistry)
+    #[arg(long, default_value_t = false)]
     trim_poly_g: bool,
 
-    /// the length of the poly-X tral to trim (above)
-    #[arg(short, long, default_value_t = 10)]
+    /// the length of the poly-X tail to trim (use with the poly-A or poly-G trimming)
+    #[arg(long, default_value_t = 10)]
     trim_poly_x_length: usize,
 
-    /// the length of the poly-X tral to trim (above)
-    #[arg(short, long, default_value_t = 0.9)]
+    /// the proportion of bases that must be X to trim the read end
+    #[arg(long, default_value_t = 0.9)]
     trim_poly_x_proportion: f64,
 
-    /// primers to detect and remove, separated by commas
-    #[arg(short, long)]
+    /// primers to detect and remove (we'll make their reverse complement too), separated by commas
+    #[arg(long)]
     primers: Option<String>,
 
-    /// primers max mismatch distance
-    #[arg(short, long, default_value_t = 1)]
+    /// the maximum mismatches allowed for primer trimming -- it's best if this is 1 or 2
+    #[arg(long, default_value_t = 1)]
     primers_max_mismatch_distance: u8,
 
-    /// what proportion of the read ends can a primer be found in -- if it's interior to this margin we drop the read(s)
-    #[arg(short, long, default_value_t = 0.2)]
+    /// what proportion of the read ends can a primer be found in (front or back) -- if it's interior to this margin we drop the read(s)
+    #[arg(long, default_value_t = 0.2)]
     primers_end_proportion: f64,
 
-    /// just display the reads and what we'd cut
-    #[arg(short, long, default_value_t = false)]
+    /// just display the reads and what we'd cut, don't actually write any output to disk
+    #[arg(long, default_value_t = false)]
     preview: bool,
 }
 
