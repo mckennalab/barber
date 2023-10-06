@@ -5,6 +5,12 @@ and a host of other tools, Butcher can trim low-quality regions off the end of t
 from sequencing reads. One nice feature is you can preview the changes in the terminal before running, which can be helpful to see how things would look
 before committing to run. 
 
+## Getting butcher
+
+Downloads are available on the release page for Linux systems, or you can build it (see below).
+
+## Documentation
+
 ```
 A constrained use-case fastq trimmer
 
@@ -45,3 +51,12 @@ Options:
           Print help
 
 ```
+
+## Compiling
+
+Rust nightly is required, mostly to avoid the crash text when you pipe (```|```) __butcher__ on the command line. Building with nightly is simple:
+```
+cargo build --release
+```
+From the command line. A __butcher__ artifact will be in the target/release/ folder.
+
