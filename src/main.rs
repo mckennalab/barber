@@ -20,7 +20,7 @@ use flate2::write::GzEncoder;
 use crate::trimmers::{BackTrimmer, FastqTrimmer, FrontBackTrimmer, PolyXTrimmer, PrimerTrimmer};
 use log::{warn};
 
-/// Simple program to greet a person
+/// A constrained use-case fastq trimmer
 #[derive(Parser, Debug)]
 struct Args {
     /// input fastq file 1
