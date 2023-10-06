@@ -39,6 +39,7 @@ impl PrimerTrimmer {
                 _ => panic!("Invalid base in primer"),
             });
         }
+        rev_comp.reverse();
         rev_comp
     }
 }
@@ -54,9 +55,10 @@ impl FastqTrimmer for PrimerTrimmer {
                 let mut max_end = read.seq.len();
 
                 for matching in x {
-                    if matching.1 < front_start_pos as usize {
-                        if matching.1 > max_front {
-                            max_front = matching.1;
+                    let match_start_end_pos = matching.1 + matching.0.len();
+                    if match_start_end_pos < front_start_pos as usize {
+                        if match_start_end_pos > max_front {
+                            max_front = match_start_end_pos;
                         }
                     } else if matching.1 >= end_start_pos as usize {
                         if matching.1 < max_end {
@@ -87,13 +89,16 @@ impl FastqTrimmer for BackTrimmer {
 impl BackTrimmer {
     pub fn trim_from_back(quals: &Vec<u8>, window_min_qual_score: &u8, window_size: &u8, qual_score_base: &u8) -> usize {
         let range = (0..(quals.len() + 1 - *window_size as usize)).rev();
+        let mut last_valid_trim = quals.len();
         for i in range {
             let average_qual = quals[i..(i + *window_size as usize)].iter().map(|&x| (x - *qual_score_base) as usize).sum::<usize>() as f64 / *window_size as f64;
             if average_qual >= f64::from(*window_min_qual_score) {
-                return i.clone() + (*window_size as usize);
+                return last_valid_trim;
+            } else {
+                last_valid_trim = i;
             }
         }
-        0
+        last_valid_trim
     }
 }
 
@@ -200,7 +205,7 @@ mod tests {
     fn trim_the_back() {
         let g_trimmer = BackTrimmer {
             window_size: 5,
-            window_min_qual_score: 30,
+            window_min_qual_score: 5,
             qual_score_base: 32,
         };
 
@@ -217,7 +222,7 @@ mod tests {
     fn trim_front_and_back() {
         let g_trimmer = FrontBackTrimmer {
             window_size: 5,
-            window_min_qual_score: 30,
+            window_min_qual_score: 5,
             qual_score_base: 32,
         };
 

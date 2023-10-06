@@ -1,3 +1,5 @@
+#![feature(unix_sigpipe)]
+
 extern crate colored;
 extern crate clap;
 extern crate flate2;
@@ -49,10 +51,6 @@ struct Args {
     /// trimming window size
     #[arg(short, long, default_value_t = 10)]
     window_size: u8,
-
-    /// minimum read quality
-    #[arg(short, long, default_value_t = 10)]
-    minimum_read_quality: u8,
 
     /// trim a read after a poly-A tail is foun (RNA-seq)
     #[arg(short, long, default_value_t = false)]
@@ -159,6 +157,7 @@ impl Iterator for FastqInputFile {
     }
 }
 
+#[unix_sigpipe = "sig_dfl"]
 fn main() {
     simple_logger::init_with_level(log::Level::Warn).unwrap();
 
@@ -176,6 +175,8 @@ fn main() {
     if args.primers.is_some() {
         let primers = args.primers.unwrap();
         let primers: Vec<Vec<u8>> = primers.split(",").map(|i|i.as_bytes().to_vec()).collect();
+        println!("Using primers: {}", &primers.clone().into_iter().map(|i|String::from_utf8(i).unwrap()).collect::<Vec<String>>().join(", "));
+
         cutters.push(Box::new(PrimerTrimmer::new(&primers, &args.primers_max_mismatch_distance, &args.primers_end_proportion)));
     }
 
