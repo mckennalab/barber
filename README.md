@@ -5,6 +5,8 @@ and a host of other tools, Butcher can trim low-quality regions off the end of t
 from sequencing reads. One nice feature is you can preview the changes in the terminal before running, which can be helpful to see how things would look
 before committing to run. 
 
+![butcher annimation](https://github.com/mckennalab/butcher/blob/22f80955e85121a8a70da0585c7d2f4115fad3d2/render1696614684110.gif)
+
 ## Getting butcher
 
 Downloads are available on the release page for Linux systems, or you can build it (see below).
