@@ -17,35 +17,35 @@ A constrained use-case fastq trimmer
 Usage: butcher [OPTIONS]
 
 Options:
-  -f, --fastq1 <FASTQ1>
+      --fastq1 <FASTQ1>
           the first fastq file -- required
-  -f, --fastq2 <FASTQ2>
+      --fastq2 <FASTQ2>
           a second fastq file, for Illumina paired-end reads
-  -o, --out-fastq1 <OUT_FASTQ1>
+      --out-fastq1 <OUT_FASTQ1>
           output fastq file 1
-  -o, --out-fastq2 <OUT_FASTQ2>
+      --out-fastq2 <OUT_FASTQ2>
           output fastq file 2 -- if using paired-end reads
-  -m, --minimum-remaining-read-size <MINIMUM_REMAINING_READ_SIZE>
+      --minimum-remaining-read-size <MINIMUM_REMAINING_READ_SIZE>
           minimum remaining read size after trimming is complete -- reads shorter than this will be discarded [default: 10]
-  -w, --window-min-qual-score <WINDOW_MIN_QUAL_SCORE>
+      --window-min-qual-score <WINDOW_MIN_QUAL_SCORE>
           the minimum average quality score a window of nucleotides must have [default: 10]
-  -w, --window-size <WINDOW_SIZE>
+      --window-size <WINDOW_SIZE>
           trimming window size [default: 10]
-  -t, --trim-poly-a
+      --trim-poly-a
           enable poly-A tail trimming (seen in RNA-seq data)
-  -t, --trim-poly-g
+      --trim-poly-g
           trim a read after a poly-G tail is found (seen when sequencing off the end of an Illumina read with 2-color chemistry)
-  -t, --trim-poly-x-length <TRIM_POLY_X_LENGTH>
+      --trim-poly-x-length <TRIM_POLY_X_LENGTH>
           the length of the poly-X tail to trim (use with the poly-A or poly-G trimming) [default: 10]
-  -t, --trim-poly-x-proportion <TRIM_POLY_X_PROPORTION>
+      --trim-poly-x-proportion <TRIM_POLY_X_PROPORTION>
           the proportion of bases that must be X to trim the read end [default: 0.9]
-  -p, --primers <PRIMERS>
+      --primers <PRIMERS>
           primers to detect and remove (we'll make their reverse complement too), separated by commas
-  -p, --primers-max-mismatch-distance <PRIMERS_MAX_MISMATCH_DISTANCE>
+      --primers-max-mismatch-distance <PRIMERS_MAX_MISMATCH_DISTANCE>
           the maximum mismatches allowed for primer trimming -- it's best if this is 1 or 2 [default: 1]
-  -p, --primers-end-proportion <PRIMERS_END_PROPORTION>
+      --primers-end-proportion <PRIMERS_END_PROPORTION>
           what proportion of the read ends can a primer be found in (front or back) -- if it's interior to this margin we drop the read(s) [default: 0.2]
-  -p, --preview
+      --preview
           just display the reads and what we'd cut, don't actually write any output to disk
   -h, --help
           Print help
