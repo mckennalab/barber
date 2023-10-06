@@ -6,7 +6,6 @@ extern crate flate2;
 extern crate core;
 
 mod trimmers;
-mod sift4;
 mod primers;
 
 use std::cmp::{max, min};
