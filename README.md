@@ -1,9 +1,6 @@
 # Butcher
 
-Butcher is a read trimmer for single-end long-read sequencing (Nanopore) or paired-end Illumina sequencing. Much like Nanofilt, Porechop, Trimmomatic, 
-and a host of other tools, Butcher can trim low-quality regions off the end of the reads, trim by adapter sequences, or remove poly-A and poly-G tracks
-from sequencing reads. One nice feature is you can preview the changes in the terminal before running, which can be helpful to see how things would look
-before committing to run. 
+Butcher is designed to trim reads for single-end long-read sequencing (like Nanopore) and paired-end Illumina sequencing. Similar to other tools such as Nanofilt, Porechop, and Trimmomatic, Butcher excels in trimming low-quality regions from the ends of reads, detecting and removing adapter sequences, and eradicating poly-A and poly-G tracks from sequencing reads. A standout feature of Butcher is its ability to provide a preview of the changes directly in the terminal. This lets users see the expected results before they decide to proceed with the operation.
 
 ![butcher annimation](https://github.com/mckennalab/butcher/blob/22f80955e85121a8a70da0585c7d2f4115fad3d2/render1696614684110.gif)
 
@@ -58,9 +55,9 @@ Options:
 
 ## Compiling
 
-Rust nightly is required, mostly to avoid the crash text when you pipe (```|```) __butcher__ on the command line. Building with nightly is simple:
+Rust nightly is required to avoid the crash text when you pipe (```|```) __butcher__ on the command line. Building with nightly is simple:
 ```
 cargo build --release
 ```
-From the command line. A __butcher__ artifact will be in the target/release/ folder.
+From the command line. A __butcher__ artifact will be created in the target/release/ folder.
 
