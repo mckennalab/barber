@@ -8,17 +8,15 @@ extern crate core;
 mod trimmers;
 mod primers;
 
-use std::cmp::{max, min};
 use std::io;
 use flate2::read::MultiGzDecoder;
 use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
-use colored::Colorize;
 use clap::Parser;
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use crate::trimmers::{BackTrimmer, FastqTrimmer, FrontBackTrimmer, PolyXTrimmer, PrimerTrimmer};
-use log::{warn};
+use crate::trimmers::{BackTrimmer, FastqTrimmer, FrontBackTrimmer, PolyXTrimmer, PrimerTrimmer, TrimResult};
+use log::{debug, info, warn};
 
 /// A constrained use-case fastq trimmer
 #[derive(Parser, Debug)]
@@ -79,6 +77,10 @@ struct Args {
     #[arg(long, default_value_t = 0.2)]
     primers_end_proportion: f64,
 
+    /// Should we split a read into two when we find an internal primer? otherwise we just drop the read when we see an internal primer
+    #[arg(long, default_value_t = false)]
+    split_on_internal_primers: bool,
+
     /// just display the reads and what we'd cut, don't actually write any output to disk
     #[arg(long, default_value_t = false)]
     preview: bool,
@@ -89,6 +91,12 @@ pub struct FastqRecord {
     pub name: Vec<u8>,
     pub seq: Vec<u8>,
     pub quals: Vec<u8>,
+}
+
+impl FastqRecord {
+    pub fn new(name: Vec<u8>, seq: Vec<u8>, quals: Vec<u8>) -> FastqRecord {
+        FastqRecord { name, seq, quals }
+    }
 }
 
 /// an input decoder for our gzipped FASTQ file
@@ -174,9 +182,12 @@ fn main() {
     if args.primers.is_some() {
         let primers = args.primers.unwrap();
         let primers: Vec<Vec<u8>> = primers.split(",").map(|i|i.as_bytes().to_vec()).collect();
-        println!("Using primers: {}", &primers.clone().into_iter().map(|i|String::from_utf8(i).unwrap()).collect::<Vec<String>>().join(", "));
+        info!("Using primers: {}", &primers.clone().into_iter().map(|i|String::from_utf8(i).unwrap()).collect::<Vec<String>>().join(", "));
 
-        cutters.push(Box::new(PrimerTrimmer::new(&primers, &args.primers_max_mismatch_distance, &args.primers_end_proportion)));
+        cutters.push(Box::new(PrimerTrimmer::new(&primers,
+                                                 &args.primers_max_mismatch_distance,
+                                                 &args.primers_end_proportion,
+                                                 &args.split_on_internal_primers)));
     }
 
     if args.trim_poly_a {
@@ -204,14 +215,6 @@ fn main() {
     }
 }
 
-fn max_min_pair(pair_one: &(bool, usize, usize), pair_two: &(bool, usize, usize)) -> (bool, usize, usize) {
-    if !pair_one.0 || !pair_two.0 {
-        (false, 0, 0)
-    } else {
-        (true, max(pair_one.1, pair_two.1), min(pair_one.2, pair_two.2))
-    }
-}
-
 fn single_end(reader1: &mut FastqInputFile,
               out_fastq: &mut BufWriter<GzEncoder<Box<dyn Write>>>,
               cutters: &Vec<Box<dyn FastqTrimmer>>,
@@ -219,19 +222,26 @@ fn single_end(reader1: &mut FastqInputFile,
               preview: &bool) {
 
     while let Some(read1) = reader1.next() {
-        let mut base_cuts = (true, 0, read1.seq.len());
+        let mut base_cuts = TrimResult::from_read(&read1);
         for cutter in cutters {
             let cut = cutter.trim(&read1);
-            base_cuts = max_min_pair(&base_cuts, &cut);
+            debug!("cut: {:?}", cut);
+            base_cuts = TrimResult::join(vec![base_cuts, cut], &true);
+            debug!("base_cuts: {:?}", base_cuts);
         }
 
-        if base_cuts.0 && &base_cuts.2 - &base_cuts.1 > *minimum_remaining_read_size {
-            match *preview {
-                true => {
-                    print_read(read1.name.as_slice(), read1.seq.as_slice(), read1.quals.as_slice(), &base_cuts.1, &base_cuts.2)
-                }
-                false => {
-                    write_read(out_fastq, &slice_read(&read1, &base_cuts.1, &base_cuts.2)).expect("Unable to write to output file 1.");
+        debug!("base cuts: {:?}", base_cuts);
+        if base_cuts.keep() {
+            for resulting_read in base_cuts.trim_results_to_reads(&read1) {
+                if resulting_read.seq.len() >= *minimum_remaining_read_size {
+                    match *preview {
+                        true => {
+                            print_read(&read1, &base_cuts);
+                        }
+                        false => {
+                            write_read(out_fastq, &resulting_read).expect("Unable to write to output file 1.");
+                        }
+                    }
                 }
             }
         }
@@ -253,29 +263,38 @@ fn paired_end(reader1: &mut FastqInputFile,
             Some(x) => {x}
         };
 
-        let mut base_cuts_read1 = (true, 0, read1.seq.len());
-        let mut base_cuts_read2 = (true, 0, read2.seq.len());
+        let mut base_cuts_read1 = TrimResult::from_read(&read1);
+        let mut base_cuts_read2 = TrimResult::from_read(&read2);
 
         for cutter in cutters {
             let cut = cutter.trim(&read1);
-            base_cuts_read1 = max_min_pair(&base_cuts_read1, &cut);
+            base_cuts_read1 = TrimResult::join(vec![base_cuts_read1, cut], &true);
 
             let cut = cutter.trim(&read2);
-            base_cuts_read2 = max_min_pair(&base_cuts_read2, &cut);
+            base_cuts_read2 = TrimResult::join(vec![base_cuts_read2, cut], &true);
         }
 
-        if ((base_cuts_read1.0 && base_cuts_read2.0) &&
-            &base_cuts_read1.2 - &base_cuts_read1.1 > *minimum_remaining_read_size) &&
-            (&base_cuts_read2.2 - &base_cuts_read2.1 > *minimum_remaining_read_size) {
+        let resulting_reads1 = base_cuts_read1.trim_results_to_reads(&read1);
+        let resulting_reads2 = base_cuts_read2.trim_results_to_reads(&read2);
+        assert_eq!(resulting_reads1.len(), resulting_reads2.len(),"{}", format!("Resulting read split from read1: {} and read2: {} are not the same segment lengths ({} and {})",
+                                                                          String::from_utf8(read1.name).unwrap(),
+                                                                          String::from_utf8(read2.name).unwrap(),
+                                                                          resulting_reads1.len(),resulting_reads2.len()));
 
-            match *preview {
-                true => {
-                    print_read(read1.name.as_slice(), read1.seq.as_slice(), read1.quals.as_slice(), &base_cuts_read1.1, &base_cuts_read1.2);
-                    print_read(read2.name.as_slice(), read2.seq.as_slice(), read2.quals.as_slice(), &base_cuts_read2.1, &base_cuts_read2.2);
-                }
-                false => {
-                    write_read(out_fastq1, &slice_read(&read1, &base_cuts_read1.1, &base_cuts_read1.2)).expect("Unable to write to output file 1.");
-                    write_read(out_fastq2, &slice_read(&read2, &base_cuts_read2.1, &base_cuts_read2.2)).expect("Unable to write to output file 2.");
+        for read_index in 0..resulting_reads1.len() {
+            let read1 = &resulting_reads1[read_index];
+            let read2 = &resulting_reads2[read_index];
+
+            if read1.seq.len() >= *minimum_remaining_read_size && read2.seq.len() >= *minimum_remaining_read_size {
+                match *preview {
+                    true => {
+                        print_read(read1, &base_cuts_read1);
+                        print_read(read2, &base_cuts_read2);
+                    }
+                    false => {
+                        write_read(out_fastq1, read1).expect("Unable to write to output file 1.");
+                        write_read(out_fastq2, read2).expect("Unable to write to output file 2.");
+                    }
                 }
             }
         }
@@ -304,51 +323,11 @@ pub fn write_read(writer: &mut BufWriter<dyn Write>, record: &FastqRecord) -> Re
     Ok(())
 }
 
-pub fn slice_read(record: &FastqRecord, cut_front: &usize, cut_back: &usize) -> FastqRecord {
-    let seq = record.seq.clone();
-    let quals = record.quals.clone();
-    let name = record.name.clone();
-    let seq = &seq[*cut_front..*cut_back];
-    let quals = &quals[*cut_front..*cut_back];
-    FastqRecord { name, seq: seq.to_vec(), quals: quals.to_vec() }
+pub fn print_read(read: &FastqRecord, trim_result: &TrimResult) {
+    println!(">{}\n{}", String::from_utf8(read.name.to_vec()).unwrap(),trim_result.print_format_read(read));
+
 }
 
-
-pub fn print_read(name: &[u8], seq: &[u8], qual: &[u8], slice_point_front: &usize, slice_point_rear: &usize) {
-    println!(">{}", String::from_utf8(name.to_vec()).unwrap());
-    print_format_read(seq, qual, slice_point_front, slice_point_rear);
-}
-
-fn print_format_read(seq: &[u8], qual: &[u8], slice_point_front: &usize, slice_point_rear: &usize) {
-    let mut seq_string = String::new();
-    //seq_string.push_str(&format!("{}",">>>>>>>>>>").white().to_string());
-    for index in 0..seq.len() {
-        let base = seq.get(index.clone()).unwrap();
-        let quality = u32::from(qual[index]);
-        assert!(quality >= 33, "Quality score must be at least 33. {} ", quality);
-
-        let mut formated_base = format!("{}", char::from(*base));
-        match *base {
-            b'A' => { formated_base = formated_base.truecolor(0, color_qual_proportion(&quality), 0).to_string() }
-            b'C' => { formated_base = formated_base.truecolor(color_qual_proportion(&quality), 0, 0).to_string() }
-            b'G' => { formated_base = formated_base.truecolor(0, 0, color_qual_proportion(&quality)).to_string() }
-            b'T' => { formated_base = formated_base.truecolor(color_qual_proportion(&quality), color_qual_proportion(&quality), 0).to_string() }
-            _ => {
-                let qual_adjusted = color_qual_proportion(&quality);
-                formated_base = formated_base.truecolor(qual_adjusted.clone(), qual_adjusted.clone(), qual_adjusted.clone()).to_string()
-            }
-        }
-        if index < *slice_point_front || index >= *slice_point_rear {
-            formated_base = formated_base.on_truecolor(255,0,0).to_string();
-        } else {
-            formated_base = formated_base.on_truecolor(color_qual_proportion(&quality),color_qual_proportion(&quality),color_qual_proportion(&quality)).to_string();
-        }
-
-        seq_string.push_str(&format!("{}", formated_base).to_string());
-    }
-
-    println!("{}", seq_string);
-}
 
 pub fn color_qual_proportion(quality: &u32) -> u8 {
     assert!(quality >= &33, "Quality score must be at least 33. {} ", quality);
