@@ -271,11 +271,11 @@ impl FastqTrimmer for PrimerTrimmer {
                     let mut resulting_read_segments = Vec::new();
                     internal_clipped_primers.iter().fold(max_front, |last_end, current| {
                         if current.start > last_end {
-                            resulting_read_segments.push(ReadSegment::new(last_end, current.start));
+                            resulting_read_segments.push(ReadSegment::new(if last_end == 0 {0} else {last_end + 1}, current.start + 1));
                         }
                         current.end
                     });
-                    resulting_read_segments.push(ReadSegment::new(internal_clipped_primers.get(internal_clipped_primers.len()-1).unwrap().end, max_end));
+                    resulting_read_segments.push(ReadSegment::new(internal_clipped_primers.get(internal_clipped_primers.len()-1).unwrap().end + 1, max_end));
                     debug!("Resulting read segments: {:?}", resulting_read_segments);
                     return TrimResult { keep_read: true, remaining_read_segments: resulting_read_segments };
                 }
@@ -452,10 +452,19 @@ mod tests {
         };
 
         let fake_read = FastqRecord { name: "FAKEREAD".as_bytes().to_vec(), seq: "GGGGGTTTTTCCCCCGGGGGAAAAATTTTTCCCCCGGGGGTTTTTCCCCC".as_bytes().to_vec(), quals: "AAAAAGGGGGTTTTTCCCCCGGGGGTTTTTCCCCCGGGGGTTTTTCCCCC".as_bytes().to_vec() };
-        // ReadSegment::new(0, 20
         assert_eq!(g_trimmer.trim(&fake_read),
                    TrimResult{keep_read: true,
-                       remaining_read_segments: vec![ReadSegment::new(0, 19), ReadSegment::new(24, 50)]});
+                       remaining_read_segments: vec![ReadSegment::new(0, 20), ReadSegment::new(25, 50)]});
+
+        let fake_read = FastqRecord { name: "FAKEREAD".as_bytes().to_vec(), seq: "AAAAACCCCCGGGGGCCCCCAAAAA".as_bytes().to_vec(), quals: "AAAAACCCCCGGGGGCCCCCAAAAA".as_bytes().to_vec() };
+        let g_trimmer = PrimerTrimmer {
+            primer_set_matcher: PrimerSetMatch::new(&vec!["GGGGG".as_bytes().to_vec()], &1),
+            end_proportion: 0.1,
+            split_middle_adapters: true,
+        };
+        assert_eq!(g_trimmer.trim(&fake_read),
+                   TrimResult{keep_read: true,
+                       remaining_read_segments: vec![ReadSegment::new(0, 10), ReadSegment::new(15, 25)]});
     }
 
     #[test]
