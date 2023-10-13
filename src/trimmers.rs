@@ -467,7 +467,38 @@ mod tests {
                        remaining_read_segments: vec![ReadSegment::new(0, 10), ReadSegment::new(15, 25)]});
     }
 
+
     #[test]
+    fn multiple_trim_front_back_primers() {
+        let mut trimmers: Vec<Box<dyn FastqTrimmer>> = Vec::new();
+
+        trimmers.push(Box::new(PrimerTrimmer {
+            primer_set_matcher: PrimerSetMatch::new(&vec!["AAAAA".as_bytes().to_vec()], &1),
+            end_proportion: 0.2,
+            split_middle_adapters: true,
+        }));
+        trimmers.push(Box::new(FrontBackTrimmer {
+            window_size: 5,
+            window_min_qual_score: 5,
+            qual_score_base: 32,
+        }));
+
+        let fake_read = FastqRecord { name: "FAKEREAD".as_bytes().to_vec(), seq: "GGGGGTTTTTCCCCCGGGGGAAAAATTTTTCCCCCGGGGGTTTTTCCCCC".as_bytes().to_vec(), quals: "!!!!!TTTTTCCCCCGGGGGAAAAATTTTTCCCCCGGGGGTTTTT!!!!!".as_bytes().to_vec() };
+
+        let mut base_cuts = TrimResult::from_read(&fake_read);
+        for trimmer in trimmers {
+            let cut = trimmer.trim(&fake_read);
+            base_cuts = TrimResult::join(vec![base_cuts, cut], &true);
+        }
+
+        assert_eq!(&fake_read.seq[base_cuts.remaining_read_segments[0].start..base_cuts.remaining_read_segments[0].end], "TTTTTCCCCCGGGGG".as_bytes());
+        assert_eq!(&fake_read.seq[base_cuts.remaining_read_segments[1].start..base_cuts.remaining_read_segments[1].end], "TTTTTCCCCCGGGGGTTTTTCCCCC".as_bytes());
+        assert_eq!(base_cuts, TrimResult{keep_read: true,
+                       remaining_read_segments: vec![ReadSegment::new(5, 20), ReadSegment::new(25, 50)]});
+    }
+
+
+        #[test]
     fn trim_front_and_back() {
         let g_trimmer = FrontBackTrimmer {
             window_size: 5,
